@@ -7,12 +7,31 @@ import { db } from './firebase'
 const LIFF_ID = '2011462958-11DZOAg4'
 const SCAN_COOLDOWN_MS = 5000
 
+const LEVELS = [
+  { pt: 0, name: '見習い' },
+  { pt: 5, name: '平社員' },
+  { pt: 10, name: '主任' },
+  { pt: 20, name: '係長' },
+  { pt: 35, name: '課長' },
+  { pt: 50, name: '次長' },
+  { pt: 70, name: '部長' },
+  { pt: 95, name: '本部長' },
+  { pt: 130, name: '取締役' },
+  { pt: 180, name: '代表取締役社長' },
+]
+
+const REWARDS = [
+  { key: 'r10', pt: 10, label: '¥500割引' },
+  { key: 'r35', pt: 35, label: '¥800割引' },
+  { key: 'r70', pt: 70, label: 'レッスン1回無料' },
+]
+
 function calcLevel(points) {
-  if (points >= 100) return 5
-  if (points >= 60) return 4
-  if (points >= 30) return 3
-  if (points >= 10) return 2
-  return 1
+  let name = LEVELS[0].name
+  for (const l of LEVELS) {
+    if (points >= l.pt) name = l.name
+  }
+  return name
 }
 
 function ScanApp() {
@@ -70,6 +89,10 @@ function ScanApp() {
     }
     lastScanRef.current = { uid, time: now }
 
+    await refreshAfterScan(uid, true)
+  }
+
+  async function refreshAfterScan(uid, addPoint) {
     try {
       const ref = doc(db, 'customers', uid)
       const snap = await getDoc(ref)
@@ -77,18 +100,35 @@ function ScanApp() {
         setLastResult({ ok: false, message: '登録されていない顧客です' })
         return
       }
-      await updateDoc(ref, { points: increment(1) })
+      if (addPoint) {
+        await updateDoc(ref, { points: increment(1) })
+      }
       const newSnap = await getDoc(ref)
       const data = newSnap.data()
       setLastResult({
         ok: true,
+        uid,
         name: data.name,
         points: data.points,
         level: calcLevel(data.points),
+        rewardsUsed: data.rewardsUsed || {},
       })
     } catch (e) {
       console.error(e)
       setLastResult({ ok: false, message: '処理に失敗しました' })
+    }
+  }
+
+  async function markRewardUsed(rewardKey) {
+    if (!lastResult?.uid) return
+    try {
+      const ref = doc(db, 'customers', lastResult.uid)
+      const usedMap = { ...(lastResult.rewardsUsed || {}) }
+      usedMap[rewardKey] = true
+      await updateDoc(ref, { rewardsUsed: usedMap })
+      await refreshAfterScan(lastResult.uid, false)
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -105,8 +145,26 @@ function ScanApp() {
             <>
               <p style={styles.resultName}>{lastResult.name} さん</p>
               <p style={styles.resultPoints}>
-                +1pt（現在 {lastResult.points}pt / Lv.{lastResult.level}）
+                現在 {lastResult.points}pt ／ {lastResult.level}
               </p>
+
+              <div style={styles.rewardsList}>
+                {REWARDS.filter((r) => lastResult.points >= r.pt).map((r) => {
+                  const used = lastResult.rewardsUsed?.[r.key]
+                  return (
+                    <div key={r.key} style={styles.rewardRow}>
+                      <span style={styles.rewardLabel}>{r.label}</span>
+                      {used ? (
+                        <span style={styles.usedTag}>使用済み</span>
+                      ) : (
+                        <button style={styles.useButton} onClick={() => markRewardUsed(r.key)}>
+                          使用済みにする
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </>
           ) : (
             <p>{lastResult.message}</p>
@@ -122,10 +180,15 @@ const styles = {
   title: { fontSize: '20px', marginBottom: '8px' },
   status: { fontSize: '13px', color: '#888', marginBottom: '12px' },
   reader: { width: '100%', maxWidth: '360px', margin: '0 auto' },
-  resultOk: { marginTop: '20px', padding: '16px', background: '#e6f7ee', borderRadius: '10px' },
+  resultOk: { marginTop: '20px', padding: '16px', background: '#e6f7ee', borderRadius: '10px', textAlign: 'left' },
   resultNg: { marginTop: '20px', padding: '16px', background: '#fdeaea', borderRadius: '10px', color: '#c0392b' },
-  resultName: { fontSize: '18px', fontWeight: 'bold', margin: 0 },
-  resultPoints: { fontSize: '15px', margin: '4px 0 0' },
+  resultName: { fontSize: '18px', fontWeight: 'bold', margin: 0, textAlign: 'center' },
+  resultPoints: { fontSize: '15px', margin: '4px 0 12px', textAlign: 'center' },
+  rewardsList: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  rewardRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '8px 12px', borderRadius: '8px' },
+  rewardLabel: { fontSize: '13px', fontWeight: 'bold', color: '#333' },
+  usedTag: { fontSize: '12px', color: '#999' },
+  useButton: { background: '#E31E24', color: '#fff', border: 'none', borderRadius: '999px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' },
 }
 
 export default ScanApp
